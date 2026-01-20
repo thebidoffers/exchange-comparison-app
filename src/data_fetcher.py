@@ -31,7 +31,7 @@ class IndexData:
 
 INDEX_CONFIGS = {
     "DFM": {
-        "symbol": "^DFMGI",
+        "symbol": "^DFMGI.AE",
         "name": "DFM General Index",
         "region": "Middle East",
         "exchange": "DFM (Dubai)",
@@ -42,7 +42,7 @@ INDEX_CONFIGS = {
     },
     "ADX": {
         "symbol": "^FTFADGI",
-        "alt_symbol": "FADGI.AD",
+        "alt_symbols": ["FADGI.AD", "^ADI"],
         "name": "ADX General Index",
         "region": "Middle East",
         "exchange": "ADX (Abu Dhabi)",
