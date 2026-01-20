@@ -1,13 +1,15 @@
 """
-Data Fetcher Module - Auto-fetch exchange data from Yahoo Finance
-This module retrieves real market data for global indices.
+Data Fetcher Module - Using Twelve Data API
+Reliable market data for global and GCC indices.
 """
 
-import yfinance as yf
+import requests
 import pandas as pd
-from datetime import datetime, date, timedelta
+import streamlit as st
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+import time
 
 
 @dataclass
@@ -29,107 +31,107 @@ class IndexData:
     error_message: Optional[str] = None
 
 
+# Twelve Data symbols for indices
 INDEX_CONFIGS = {
     "DFM": {
-        "symbol": "DFMGI.AE",
+        "symbol": "DFMGI",
+        "exchange": "DFM",
+        "twelve_data_symbol": "DFMGI:DFM",
         "name": "DFM General Index",
         "region": "Middle East",
-        "exchange": "DFM (Dubai)",
+        "exchange_display": "DFM (Dubai)",
         "local_currency": "AED",
-        "market_cap_source": "manual",
         "estimated_market_cap_usd": 244_000_000_000,
-        "avg_price_per_share": 5.0,
     },
     "ADX": {
-        "symbol": "FTFADGI",
-        "alt_symbols": ["FADGI.AD", "ADI"],
+        "symbol": "FADGI",
+        "exchange": "ADX",
+        "twelve_data_symbol": "FADGI:ADX",
         "name": "ADX General Index",
         "region": "Middle East",
-        "exchange": "ADX (Abu Dhabi)",
+        "exchange_display": "ADX (Abu Dhabi)",
         "local_currency": "AED",
-        "market_cap_source": "manual",
         "estimated_market_cap_usd": 844_000_000_000,
-        "avg_price_per_share": 10.0,
     },
     "TASI": {
-        "symbol": "^TASI.SR",
+        "symbol": "TASI",
+        "exchange": "Tadawul",
+        "twelve_data_symbol": "TASI:TADAWUL",
         "name": "TASI",
         "region": "Middle East",
-        "exchange": "Tadawul (Saudi)",
+        "exchange_display": "Tadawul (Saudi)",
         "local_currency": "SAR",
-        "market_cap_source": "manual",
         "estimated_market_cap_usd": 2_700_000_000_000,
-        "avg_price_per_share": 50.0,
     },
     "S&P500": {
-        "symbol": "^GSPC",
+        "symbol": "SPX",
+        "exchange": "NYSE",
+        "twelve_data_symbol": "SPX",
         "name": "S&P 500",
         "region": "USA",
-        "exchange": "NYSE",
+        "exchange_display": "NYSE",
         "local_currency": "USD",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 50_000_000_000_000,
-        "avg_price_per_share": 150.0,
     },
     "NASDAQ": {
-        "symbol": "^IXIC",
+        "symbol": "IXIC",
+        "exchange": "NASDAQ",
+        "twelve_data_symbol": "IXIC",
         "name": "NASDAQ Composite",
         "region": "USA",
-        "exchange": "NASDAQ",
+        "exchange_display": "NASDAQ",
         "local_currency": "USD",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 28_000_000_000_000,
-        "avg_price_per_share": 100.0,
     },
     "FTSE100": {
-        "symbol": "^FTSE",
+        "symbol": "FTSE",
+        "exchange": "LSE",
+        "twelve_data_symbol": "FTSE",
         "name": "FTSE 100",
         "region": "Europe",
-        "exchange": "LSE (UK)",
+        "exchange_display": "LSE (UK)",
         "local_currency": "GBP",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 3_300_000_000_000,
-        "avg_price_per_share": 1000.0,
     },
     "DAX": {
-        "symbol": "^GDAXI",
+        "symbol": "DAX",
+        "exchange": "XETRA",
+        "twelve_data_symbol": "DAX",
         "name": "DAX 40",
         "region": "Europe",
-        "exchange": "XETRA (Germany)",
+        "exchange_display": "XETRA (Germany)",
         "local_currency": "EUR",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 2_270_000_000_000,
-        "avg_price_per_share": 200.0,
     },
     "CAC40": {
-        "symbol": "^FCHI",
+        "symbol": "CAC",
+        "exchange": "Euronext",
+        "twelve_data_symbol": "CAC",
         "name": "CAC 40",
         "region": "Europe",
-        "exchange": "Euronext (France)",
+        "exchange_display": "Euronext (France)",
         "local_currency": "EUR",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 2_160_000_000_000,
-        "avg_price_per_share": 100.0,
     },
     "NIKKEI": {
-        "symbol": "^N225",
+        "symbol": "NI225",
+        "exchange": "TSE",
+        "twelve_data_symbol": "NI225",
         "name": "Nikkei 225",
         "region": "Asia",
-        "exchange": "TSE (Japan)",
+        "exchange_display": "TSE (Japan)",
         "local_currency": "JPY",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 6_330_000_000_000,
-        "avg_price_per_share": 3000.0,
     },
     "HANGSENG": {
-        "symbol": "^HSI",
+        "symbol": "HSI",
+        "exchange": "HKEX",
+        "twelve_data_symbol": "HSI",
         "name": "Hang Seng",
         "region": "Asia",
-        "exchange": "HKEX (Hong Kong)",
+        "exchange_display": "HKEX (Hong Kong)",
         "local_currency": "HKD",
-        "market_cap_source": "estimate",
         "estimated_market_cap_usd": 5_130_000_000_000,
-        "avg_price_per_share": 50.0,
     },
 }
 
@@ -143,51 +145,106 @@ FX_RATES_TO_USD = {
     "HKD": 0.128,
 }
 
+TWELVE_DATA_BASE_URL = "https://api.twelvedata.com"
 
-def fetch_index_data(symbol: str, year: int = None) -> Tuple[Optional[Dict], str]:
-    """Fetch index data from Yahoo Finance."""
-    if year is None:
-        year = datetime.now().year
+
+def get_api_key() -> str:
+    """Get API key from Streamlit secrets or environment."""
+    try:
+        return st.secrets["TWELVE_DATA_API_KEY"]
+    except:
+        import os
+        return os.environ.get("TWELVE_DATA_API_KEY", "")
+
+
+def fetch_time_series(symbol: str, api_key: str, start_date: str, end_date: str) -> Tuple[Optional[List], str]:
+    """
+    Fetch historical time series data from Twelve Data.
+    """
+    try:
+        url = f"{TWELVE_DATA_BASE_URL}/time_series"
+        params = {
+            "symbol": symbol,
+            "interval": "1day",
+            "start_date": start_date,
+            "end_date": end_date,
+            "apikey": api_key,
+            "outputsize": 500,
+        }
+        
+        response = requests.get(url, params=params, timeout=15)
+        data = response.json()
+        
+        if "code" in data and data["code"] != 200:
+            return None, f"API Error: {data.get('message', 'Unknown error')}"
+        
+        if "values" not in data or len(data["values"]) == 0:
+            return None, f"No historical data for {symbol}"
+        
+        return data["values"], "Success"
+        
+    except requests.exceptions.Timeout:
+        return None, f"Timeout fetching {symbol}"
+    except Exception as e:
+        return None, f"Error: {str(e)}"
+
+
+def calculate_ytd(symbol: str, api_key: str, year: int) -> Tuple[Optional[Dict], str]:
+    """
+    Calculate YTD performance for a symbol.
+    """
+    start_date = f"{year}-01-01"
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    
+    values, msg = fetch_time_series(symbol, api_key, start_date, end_date)
+    
+    if values is None:
+        return None, msg
     
     try:
-        ticker = yf.Ticker(symbol)
-        start_date = f"{year}-01-01"
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        # Values are returned newest first, so:
+        # values[0] = most recent (current)
+        # values[-1] = oldest (year start)
+        current_price = float(values[0]["close"])
+        year_start_price = float(values[-1]["close"])
         
-        hist = ticker.history(start=start_date, end=end_date)
-        
-        if hist.empty:
-            return None, f"No data available for {symbol}"
-        
-        year_start_price = hist['Close'].iloc[0]
-        current_price = hist['Close'].iloc[-1]
         ytd_percent = ((current_price - year_start_price) / year_start_price) * 100
-        avg_volume = hist['Volume'].mean() if 'Volume' in hist.columns else None
         
-        data = {
+        avg_volume = None
+        volumes = [float(v.get("volume", 0)) for v in values if v.get("volume")]
+        if volumes and sum(volumes) > 0:
+            avg_volume = sum(volumes) / len(volumes)
+        
+        result = {
             "current_price": current_price,
             "year_start_price": year_start_price,
             "ytd_percent": round(ytd_percent, 2),
             "avg_volume": avg_volume,
-            "last_updated": datetime.now(),
-            "data_points": len(hist),
-            "start_date": hist.index[0].strftime("%Y-%m-%d"),
-            "end_date": hist.index[-1].strftime("%Y-%m-%d"),
+            "data_points": len(values),
+            "start_date": values[-1]["datetime"],
+            "end_date": values[0]["datetime"],
         }
         
-        return data, "Success"
+        return result, "Success"
         
-    except Exception as e:
-        return None, f"Error fetching {symbol}: {str(e)}"
+    except (KeyError, IndexError, ValueError) as e:
+        return None, f"Error parsing data: {str(e)}"
 
 
 def fetch_all_indices(selected_indices: List[str] = None, year: int = None) -> Tuple[List[Dict], Dict]:
-    """Fetch data for all selected indices."""
+    """
+    Fetch data for all selected indices using Twelve Data API.
+    """
     if selected_indices is None:
         selected_indices = list(INDEX_CONFIGS.keys())
     
     if year is None:
         year = datetime.now().year
+    
+    api_key = get_api_key()
+    
+    if not api_key:
+        return [], {"success": [], "failed": [{"index": "ALL", "error": "No API key configured. Add TWELVE_DATA_API_KEY to Streamlit secrets."}], "timestamp": datetime.now().isoformat()}
     
     results = []
     status = {"success": [], "failed": [], "timestamp": datetime.now().isoformat()}
@@ -198,39 +255,36 @@ def fetch_all_indices(selected_indices: List[str] = None, year: int = None) -> T
             continue
         
         config = INDEX_CONFIGS[index_key]
-        symbol = config["symbol"]
+        symbol = config["twelve_data_symbol"]
         
-        data, msg = fetch_index_data(symbol, year)
+        # Small delay to avoid rate limiting
+        time.sleep(0.5)
         
-        if data is None and "alt_symbol" in config:
-            data, msg = fetch_index_data(config["alt_symbol"], year)
+        data, msg = calculate_ytd(symbol, api_key, year)
         
         if data:
-            adtv_local = None
             adtv_usd = None
-            if data.get("avg_volume"):
-                avg_price = config.get("avg_price_per_share", data["current_price"])
+            if data.get("avg_volume") and data["avg_volume"] > 0:
+                avg_price = data["current_price"]
                 adtv_local = data["avg_volume"] * avg_price
                 fx_rate = FX_RATES_TO_USD.get(config["local_currency"], 1.0)
                 adtv_usd = adtv_local * fx_rate
             
-            market_cap_usd = config.get("estimated_market_cap_usd")
-            
             result = {
                 "key": index_key,
                 "region": config["region"],
-                "exchange": config["exchange"],
+                "exchange": config["exchange_display"],
                 "index_name": config["name"],
                 "local_currency": config["local_currency"],
                 "ytd_percent": data["ytd_percent"],
                 "year_start_price": data["year_start_price"],
                 "current_price": data["current_price"],
-                "market_cap_usd": market_cap_usd,
-                "adtv_local": adtv_local,
+                "market_cap_usd": config.get("estimated_market_cap_usd"),
                 "adtv_usd": adtv_usd,
                 "avg_volume": data.get("avg_volume"),
-                "last_updated": data["last_updated"].isoformat(),
-                "data_source": f"Yahoo Finance ({symbol})",
+                "last_updated": datetime.now().isoformat(),
+                "data_source": f"Twelve Data ({symbol})",
+                "data_range": f"{data.get('start_date', 'N/A')} to {data.get('end_date', 'N/A')}",
                 "fetch_status": "success",
             }
             results.append(result)
@@ -239,14 +293,14 @@ def fetch_all_indices(selected_indices: List[str] = None, year: int = None) -> T
             result = {
                 "key": index_key,
                 "region": config["region"],
-                "exchange": config["exchange"],
+                "exchange": config["exchange_display"],
                 "index_name": config["name"],
                 "local_currency": config["local_currency"],
                 "ytd_percent": None,
                 "market_cap_usd": config.get("estimated_market_cap_usd"),
                 "adtv_usd": None,
                 "last_updated": datetime.now().isoformat(),
-                "data_source": "Manual (fetch failed)",
+                "data_source": "Fetch failed",
                 "fetch_status": "failed",
                 "error_message": msg,
             }
@@ -257,14 +311,14 @@ def fetch_all_indices(selected_indices: List[str] = None, year: int = None) -> T
 
 
 def get_available_indices() -> List[Dict]:
-    """Get list of available indices with their configurations."""
+    """Get list of available indices."""
     return [
         {
             "key": key,
             "name": config["name"],
-            "exchange": config["exchange"],
+            "exchange": config["exchange_display"],
             "region": config["region"],
-            "symbol": config["symbol"],
+            "symbol": config["twelve_data_symbol"],
         }
         for key, config in INDEX_CONFIGS.items()
     ]
